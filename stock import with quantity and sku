@@ -1,0 +1,224 @@
+<?php
+
+$limit = 300;
+
+$sessionId = 'session_'.date("Ymd");	
+$isLogged = (bool)@$_SESSION[$sessionId];	
+/*
+if( !function_exists('US_update_product_stock') ){ 
+function US_update_product_stock($sku,qty){
+	$error = false; $success = false;
+	/*
+	$_product=Mage::getModel('catalog/product')->loadByAttribute('sku',$sku);
+	if($_product){
+		$_product=Mage::getModel('catalog/product')->load($_product->getId());
+		$stock = Mage::getModel('cataloginventory/stock_item')->loadByProduct($_product);
+		if( !empty($new_qty) )
+		{
+			$stock->setQty((int)$new_qty);
+			$success = $stock->save();
+			if( !$success )
+				$error =3;
+		} else
+			$error =2;
+	}
+	else
+		$error =1;
+
+	return  array($success,$error);
+	*
+}
+}
+*/
+if(1)
+{
+
+  require_once 'reader.php';
+	if(isset($_POST['login']))
+    {
+		if( trim(@$_POST['pas']) =='Password '){
+			$isLogged = $_SESSION[$sessionId] = true;
+		} else
+            echo "<span style='font-weight:bold; color:red;'>Error : Invalid Password</span>"."<br><br>";
+	}
+	
+	if( $isLogged ){
+		
+		if( !empty($_REQUEST['update_stock']) )
+		{
+			
+			$data = new Spreadsheet_Excel_Reader();
+			$data->setOutputEncoding('CP1251');
+			$path= 'stockfile.xls';
+			$data->read($path);
+			$_fulldata = $data->sheets[0]['cells'];
+			unset($_fulldata[1]);
+
+			$fulldata = array();
+			foreach ($_fulldata as $key => $r) {
+				if( trim(@$r[1]) != '' &&  trim(@$r[3]) != '')
+					$fulldata[trim($r[1])] = trim($r[3]);
+			}
+			
+			$totalProducts = count($fulldata);
+			
+			$page = (int)@$_REQUEST['page'] ?: 1;
+			if( $page < 1) $page = 1;
+
+			$totalPages = ceil($totalProducts/$limit);
+			if( $page > $totalPages) $page = $totalPages;
+
+			$start = ($page-1)*$limit;
+			$end = $start+$limit-1;
+
+			$per = number_format($page/$totalPages*100,'1','.','');
+
+			echo "Products: ".$totalProducts."<br>";
+
+			echo "<b style=\"font-size:18px;\">Processing ... $per%</b> <br><br>";
+
+
+	 		$t_stock_item = Mage::getSingleton('core/resource')->getTableName('cataloginventory_stock_item');
+	 		$t_stock_status = Mage::getSingleton('core/resource')->getTableName('cataloginventory_stock_status');
+	 		$t_products  = Mage::getSingleton('core/resource')->getTableName('catalog_product_entity');
+
+
+			$count = 0;
+			foreach ($fulldata as $sku => $qty) {
+				if( $count >= $start && $count <= $end ){
+
+					if( $qty != '' ){
+						$qty = (int)$qty;
+
+						$conn = Mage::getSingleton('core/resource')->getConnection('core_read');
+						$product_id =  (int)@$conn->fetchOne("SELECT entity_id FROM $t_products WHERE sku = ?", array($sku));
+
+						if( $product_id ){
+
+							$sql= "UPDATE " .$t_stock_item. " csi," . $t_stock_status. " css
+			                   SET
+								   csi.qty = ?,
+								   csi.is_in_stock = ?,
+				                   css.qty = ?,
+								   css.stock_status = ?
+							   WHERE
+								   csi.product_id = ?
+						           AND csi.product_id = css.product_id";
+
+						    	$status		= $qty ? 1 : 0;
+						    try{
+								$success = $conn->query($sql, array($qty, $status, $qty, $status, $product_id));
+
+								if( $success )
+									echo '<div style="color:green;font-weight:bold;">SKU: '.$sku.' - Updated (Qty: '.$qty.')</div>';
+								else
+									echo '<div style="color:red;font-weight:bold;">SKU: '.$sku.' - Not updated</div>';
+							} catch(Exception $e){
+								echo '<div style="color:red;font-weight:bold;">SKU: '.$sku.' - '.$e->getMassage().'</div>';
+							}
+						} else 
+							echo '<div style="color:red;font-weight:bold;">SKU: '.$sku.' - Not found !</div>';
+
+					} else {
+						echo '<div style="color:red;font-weight:bold;">';
+						echo "SKU: $sku - Qty is empty";
+						echo "</div>";
+					}
+				}
+				$count++;
+			}
+			
+			$js_url = $page < $totalPages
+				? '/UPDATE-STOCK?update_stock=1&page='.($page+1)
+				:  '/UPDATE-STOCK?stock_updated=1';
+			?>
+			<script type="text/javascript">
+				window.location.href = '<?php echo $js_url;?>';
+			</script>
+			<?php 
+        }
+	
+		if(isset($_POST['upload_file']))
+		{
+			if($_FILES['upload']['size']!="")
+			{
+				$target_dir = Mage::getBaseDir()."/";
+				$target_file = $target_dir . basename($_FILES["upload"]["name"]);
+				$uploadOk = 1;
+				$imageFileType = pathinfo($target_file,PATHINFO_EXTENSION);
+				
+				// Allow certain file formats
+				if($imageFileType != "xls") {
+					echo "<span style='font-weight:bold; color:red;'>Sorry, only xls files are allowed.</span>";
+					echo "<br>";
+					$uploadOk = 0;
+				}
+				if (file_exists($target_file)) {
+					unlink($target_file);
+				}
+				// Check if $uploadOk is set to 0 by an error
+				if ($uploadOk == 0) {
+					echo "<span style='font-weight:bold; color:red;'>Sorry, your file was not uploaded.</span>"."<br><br>";
+				// if everything is ok, try to upload file
+				} else {
+					if (move_uploaded_file($_FILES["upload"]["tmp_name"], $target_dir . "stock.xls")) {
+						echo "<span style='font-weight:bold; color:green;'>The file ". basename( $_FILES["upload"]["name"]). " has been uploaded.</span>"."<br><br>";
+					} else {
+						echo "Sorry, there was an error uploading your file."."<br><br>";
+					}
+				}
+			}
+			else {
+				echo "<span style='font-weight:bold; color:red;'>Error : Please select a file to upload</span>"."<br><br>";
+			}
+		}
+		
+	} 
+	if( empty($_REQUEST['update_stock']) ){
+	if( $isLogged)
+	{	
+?>
+
+
+
+
+<form name="stock-upload" method="post" enctype="multipart/form-data">
+    <table style="width: 100%;">
+        <tr><th colspan="2" style="font-weight: bold; color: green"><?php echo $this->__("Upload latest inventory file") ?></th></tr>
+        <tr><th colspan="2" style="font-weight: bold; color: Red"><?php echo $this->__("Note : Please do not change file format, just update data and upload file.") ?></th></tr>
+        <tr>
+            <td style="width: 50%; font-weight: bold;"><?php echo $this->__("Press upload to upload new file"); ?></td>
+            <td>
+                <input type="file" name="upload">
+                <input style="height: 33px; width: 106px;background: yellowgreen;color: white;border: 0px;font-size: 15px;
+    			font-weight: bold;border-radius:3px;cursor: pointer;"type="submit" name="upload_file" value="Upload">
+            </td>
+        </tr>
+    </table>
+</form>
+<br><br>
+    <table style="width: 100%;">
+        <tr> 
+            <td style="font-weight: bold;"><a style="background: yellowgreen; padding: 12px;color: white;font-weight: bold;
+    font-size: 14px;text-align: center;text-decoration: none;"href="/UPDATE-STOCK?update_stock=1&page=1"><?php echo $this->__("Update inventory"); ?></a></td>
+        </tr>
+    </table>
+
+<?php } else { ?>		
+<form action="" method="post">
+    <table style="width: 100%;">
+        <tr> 
+            <td style="width: 50%; font-weight: bold;"><?php echo $this->__("Enter password"); ?></td>
+            <td>
+                <input type="password" name="pas" value="" placeholder="Password" style="font-size: 10px; height: 20px;width: 140px;">
+                <input type="submit" name="login" value="Update">
+            </td>
+        </tr>
+    </table>
+</form>
+
+<?php } 
+	}
+} else {
+    header('Location: '.Mage::getBaseUrl());
+} ?>
